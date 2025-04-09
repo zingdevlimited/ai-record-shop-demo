@@ -1,0 +1,31 @@
+{
+  "image": "zingdev/devcontainer-node:20-base",
+  "runArgs": ["--name", "ai-record-shop"],
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/zingdevlimited/dev-containers/zing-twilio-cli": {
+      "version": "latest"
+    },
+    "azure-cli": "latest"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "SonarSource.sonarlint-vscode",
+        "yzhang.markdown-all-in-one",
+        "streetsidesoftware.code-spell-checker"
+      ]
+    }
+  },
+  "initializeCommand": "docker run --rm -v ai-record-shop:/mnt/sv zingdev/shared-twilio-config 1000",
+  "postCreateCommand": "ln -s /mnt/twilio-config/config.json /home/vscode/.twilio-cli/config.json",
+  "mounts": [
+    {
+      "source": "ai-record-shop",
+      "target": "/mnt/twilio-config",
+      "type": "volume"
+    }
+  ]
+}

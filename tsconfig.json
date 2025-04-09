@@ -1,0 +1,18 @@
+{
+    "compilerOptions": {
+      "target": "es5",                   // Set the target JavaScript version (e.g., "es2015", "esnext")
+      "module": "commonjs",              // Module system (e.g., "commonjs", "amd", "systemjs")
+      "strict": true,                   // Enable strict mode for type safety
+      "lib": ["dom", "dom.iterable"],    // Include necessary type libraries
+      "allowJs": true,                   // Allow compiling JavaScript files (optional)
+      "skipLibCheck": true,              // Skip type checking for built-in lib files (optional)
+      "esModuleInterop": true,           // Enable compatibility with ES modules (optional)
+      "outDir": "dist"                   // Output directory for compiled JavaScript files (optional)
+    },
+    "include": [
+      "src/**/*.ts"                     // Include all TypeScript files in the "src" directory and subdirectories
+    ],
+    "exclude": [
+      "node_modules"                     // Exclude the "node_modules" directory (recommended)
+    ]
+  }
