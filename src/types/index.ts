@@ -1,4 +1,4 @@
-import { string, z } from "zod";
+import { z } from "zod";
 
 export const wsMessageSchema = z.object({
   type: z.string(),
