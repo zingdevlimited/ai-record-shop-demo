@@ -6,6 +6,8 @@ import { wsMessageSchema } from "./types";
 import { AzureOpenAI } from "openai";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { functionCalls } from "./types/functionCalls";
+import { StockTableService } from "./services/stock-data-table-service";
+import { streamOpenAIResponseToClient } from "./helpers/streamOpenAIResponse";
 
 dotenv.config();
 const app: Express = express();
@@ -29,7 +31,7 @@ const options = { endpoint, apiKey, deployment, apiVersion };
 
 const client = new AzureOpenAI(options);
 
-const promptHistory: ChatCompletionMessageParam[] = [];
+let promptHistory: ChatCompletionMessageParam[] = [];
 promptHistory.push({
   name: "system",
   role: "system",
@@ -37,111 +39,121 @@ promptHistory.push({
     "You are a helpful assistant, for a record store, which sells vinyl records",
 });
 
+//Init StockTableService
+
+const stockService = new StockTableService();
+
 wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`Client connected from IP: ${clientIp}`);
-
+  let processing = false;
   ws.send(`Connection Established`);
 
   ws.on("message", async (message) => {
-    const stringMessage = message.toString("utf-8");
-    const parsed = JSON.parse(stringMessage);
-    const typedMessage = wsMessageSchema.safeParse(parsed);
-    if (typedMessage.success) {
-      if (typedMessage.data.type === "prompt") {
-        // Handle a "Interrupt" case, so we can deal with the history, Tool interruptions are harder.
-        console.log(typedMessage.data);
-        console.log(typedMessage.data.voicePrompt);
-        if (typedMessage.data.lang && typedMessage.data.voicePrompt) {
-          promptHistory.push({
-            name: "user",
-            role: "user",
-            content: typedMessage.data.voicePrompt,
-          });
-
-          // Call open AI to generate a response
-          const aiResponse = await client.chat.completions.create({
-            messages: promptHistory,
-            max_completion_tokens: 10000,
-            model: modelName,
-            stream: true,
-            tools: functionCalls,
-          });
-
-          //Send the stream of the response back down the WS to Twilio
-          let accumulatedResponse = "";
-          let functionCall = false;
-          let functionName = "";
-
-          for await (const part of aiResponse) {
-            let currentToken = "";
-            let isLastToken = false;
-
-            if (part.choices[0]) {
-              const choices = part.choices[0];
-              let delta;
-              if (choices.delta) {
-                delta = choices.delta;
-
-                if (delta.tool_calls) {
-                  functionCall = true;
-                }
-              }
-              if (functionCall) {
-                if (delta?.tool_calls) {
-                  accumulatedResponse +=
-                    delta.tool_calls[0].function?.arguments; // We build up the string of json eventually looks like {"RecordName": "The White Album"}
-                  functionName =
-                    delta.tool_calls[0].function?.name ?? functionName;
-                }
-              } else {
-                currentToken = choices.delta.content ?? "";
-                accumulatedResponse += currentToken;
-                if (choices.finish_reason === "stop") {
-                  isLastToken = true;
-                }
-                //Checking for the end of sentences to append the is last Token
-                if (["!", "?", "."].includes(currentToken.slice(-1))) {
-                  isLastToken = true;
-                }
-                if (currentToken !== "") {
-                  const textTokenMessage = {
-                    type: "text",
-                    token: currentToken,
-                    last: isLastToken,
-                  };
-                  console.log(textTokenMessage);
-                  const messageToSend = JSON.stringify(textTokenMessage);
-                  ws.send(messageToSend);
-                }
-              }
-            }
-          }
-          if (functionCall) {
-            //Set Timeout here to send a hold on message, to handle situations where functions calls take a long time
-            //Preemptible will stop the previous send from speaking, so you can stop a filler phrase
-            switch (functionName) {
-              case "query_stock": {
-                const queryStockParams: {
-                  RecordName: string;
-                  BandName: string;
-                  Genre: string;
-                } = JSON.parse(accumulatedResponse);
-                console.log(queryStockParams);
-                break;
-              }
-            }
-          } else {
+    if (processing) {
+      console.log("Processing something already");
+      return;
+    }
+    try {
+      const stringMessage = message.toString("utf-8");
+      const parsed = JSON.parse(stringMessage);
+      const typedMessage = wsMessageSchema.safeParse(parsed);
+      if (typedMessage.success) {
+        if (typedMessage.data.type === "prompt") {
+          // Handle a "Interrupt" case, so we can deal with the history, Tool interruptions are harder.
+          console.log(typedMessage.data);
+          console.log(typedMessage.data.voicePrompt);
+          if (typedMessage.data.lang && typedMessage.data.voicePrompt) {
             promptHistory.push({
-              name: "system",
-              role: "system",
-              content: accumulatedResponse, // TODO: think of when a user interupts a response mid way, how to to save the LLM conversation history correctly
+              name: "user",
+              role: "user",
+              content: typedMessage.data.voicePrompt,
             });
+
+            // Call open AI to generate a response
+            const aiResponse = await client.chat.completions.create({
+              messages: promptHistory,
+              max_completion_tokens: 10000,
+              model: modelName,
+              stream: true,
+              tools: functionCalls,
+            });
+
+            //call the streamAIResponse function
+            processing = true;
+            const finishedStream = await streamOpenAIResponseToClient(
+              aiResponse,
+              ws,
+              promptHistory
+            );
+            if (finishedStream) {
+              processing = false;
+            }
+            if (finishedStream.functionCallDetected) {
+              //Set Timeout here to send a hold on message, to handle situations where functions calls take a long time
+              //Preemptible will stop the previous send from speaking, so you can stop a filler phrase
+              switch (finishedStream.functionName) {
+                case "query_stock": {
+                  if (finishedStream.functionArguments) {
+                    const queryStockParams: {
+                      RecordTitle: string;
+                      Artist: string;
+                      Genre: string;
+                    } = JSON.parse(finishedStream.functionArguments);
+                    const records = await stockService.queryEntities(
+                      queryStockParams
+                    );
+                    const stringyRecords = JSON.stringify(records);
+                    const aiResponse = await client.chat.completions.create({
+                      messages: [
+                        {
+                          name: "system",
+                          role: "system",
+                          content: `You are a helpful assistant, for a record store, which sells vinyl records`,
+                        },
+                        {
+                          name: "system",
+                          role: "system",
+                          content: `You will be provided with an array of stock data objects in JSON format.
+                       Use *only* this data to answer the user's question. Do not use any prior knowledge.
+                      If the answer cannot be found in the provided data, say so.
+                      \n\nHere is the stock data:\n\`\`\`json\n${stringyRecords}\n\`\`\``,
+                        },
+                        {
+                          name: "user",
+                          role: "user",
+                          content: typedMessage.data.voicePrompt,
+                        },
+                      ],
+                      max_completion_tokens: 10000,
+                      model: modelName,
+                      stream: true,
+                    });
+                    processing = true;
+                    const finishedStockStream =
+                      await streamOpenAIResponseToClient(
+                        aiResponse,
+                        ws,
+                        promptHistory
+                      );
+                    if (finishedStockStream) {
+                      processing = false;
+                    }
+                    promptHistory = finishedStockStream.chatHistory;
+                  }
+                  break;
+                }
+              }
+            } else {
+              promptHistory = finishedStream.chatHistory;
+            }
           }
+        } else if (typedMessage.data.type === "end") {
+          console.log("End of connection");
         }
-      } else if (typedMessage.data.type === "end") {
-        console.log("End of connection");
       }
+    } catch (e) {
+      processing = false;
     }
   });
 

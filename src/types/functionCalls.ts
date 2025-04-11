@@ -8,17 +8,19 @@ const queryStockInformationFunction: ChatCompletionTool = {
     parameters: {
       type: "object",
       properties: {
-        RecordName: {
+        RecordTitle: {
           type: "string",
           description: "The name of an album for a vinyl record",
         },
-        BandName: {
+        Artist: {
           type: "string",
-          description: "The name of the band who made the album",
+          description:
+            "The name of the band who made the album. Format this with capital letters for each word, example: Pink Floyd, The Beatles, Kendrick Lamar",
         },
         Genre: {
           type: "string",
-          description: "The genre of the album",
+          description:
+            "The genre of the album. Format this with capital letters for each word, examples: Hip Hop, Rock, Indie, Prog Rock, Alt Rock, Pop, Trip Hop, Folk Rock, Grunge, Punk",
         },
       },
       additionalProperties: false,
