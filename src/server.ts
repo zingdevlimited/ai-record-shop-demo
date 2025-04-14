@@ -6,7 +6,7 @@ import { wsMessageSchema } from "./types";
 import { AzureOpenAI } from "openai";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { functionCalls } from "./types/functionCalls";
-import { StockTableService } from "./services/stock-data-table-service";
+import { StoreEntity, TableService } from "./services/data-table-service";
 import { streamOpenAIResponseToClient } from "./helpers/streamOpenAIResponse";
 
 dotenv.config();
@@ -39,9 +39,9 @@ promptHistory.push({
     "You are a helpful assistant, for a record store, which sells vinyl records",
 });
 
-//Init StockTableService
+//Init TableService
 
-const stockService = new StockTableService();
+const tableService = new TableService();
 
 wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
   const clientIp = req.socket.remoteAddress;
@@ -100,10 +100,23 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
                       Artist: string;
                       Genre: string;
                     } = JSON.parse(finishedStream.functionArguments);
-                    const records = await stockService.queryEntities(
+                    const records = await tableService.queryStockEntities(
                       queryStockParams
                     );
+                    let stores: StoreEntity[] = [];
+                    records.forEach(async (stock) => {
+                      const queryStoreParams = {
+                        rowKey: stock.partitionKey,
+                      };
+                      stores.push(
+                        await tableService.getStoreEntity(
+                          queryStoreParams.rowKey
+                        )
+                      );
+                    });
+
                     const stringyRecords = JSON.stringify(records);
+                    const stringyStores = JSON.stringify(stores);
                     const aiResponse = await client.chat.completions.create({
                       messages: [
                         {
@@ -117,7 +130,9 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
                           content: `You will be provided with an array of stock data objects in JSON format.
                        Use *only* this data to answer the user's question. Do not use any prior knowledge.
                       If the answer cannot be found in the provided data, say so.
-                      \n\nHere is the stock data:\n\`\`\`json\n${stringyRecords}\n\`\`\``,
+                      \n\nHere is the stock data:\n\`\`\`json\n${stringyRecords}\n\`\`\` Along with this stock information could be 
+                      store information. The partition key of the stock, is a link to these store entries:
+                      ${stringyStores}`,
                         },
                         {
                           name: "user",
