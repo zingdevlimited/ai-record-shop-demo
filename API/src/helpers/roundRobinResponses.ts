@@ -11,7 +11,6 @@ export function roundRobinResponse(
   const listOfTextResponses = [
     "One moment, let me have a look...",
     "Okay, just give me a second here...",
-    "Uh huh, yes, ummmm...",
     "Right, let's see...",
     "Hmm, interesting, hold on...",
     "Just processing that now...",

@@ -5,6 +5,8 @@ import {
 } from "openai/resources/chat/completions";
 import { Stream } from "openai/streaming";
 import { WebSocket } from "ws";
+import { sendToSyncStream } from "./sendToSyncStream";
+import { Twilio } from "twilio";
 
 interface StreamProcessingResult {
   responseText: string;
@@ -18,6 +20,7 @@ export async function streamOpenAIResponseToClient(
   aiStream: Stream<ChatCompletionChunk>,
   ws: WebSocket,
   chatHistory: ChatCompletionMessageParam[],
+  twilioClient: Twilio,
   timer?: any
 ): Promise<StreamProcessingResult> {
   let accumulatedResponseText = "";
@@ -77,6 +80,7 @@ export async function streamOpenAIResponseToClient(
       role: "system",
       content: accumulatedResponseText,
     });
+    await sendToSyncStream("System", accumulatedResponseText, twilioClient);
   }
   return {
     responseText: accumulatedResponseText,

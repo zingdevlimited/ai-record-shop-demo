@@ -6,7 +6,8 @@ const queryStockInformationFunction: ChatCompletionTool = {
     name: "query_stock",
     description: `Query the shops inventory to search for stock information.
      Call this function when asked to recommend a record, or asked to search for a record, or if asked what we have.
-    Example Triggers: "Do you have any x available", "What x records do you have", "Can you check if you have anything by x"`,
+    Example Triggers: "Do you have any x available", "What x records do you have", "Can you check if you have anything by x",
+    "Do you have something similar to x", "Find me something I might like", "Recommend me a new album based upon my previous orders"`,
     parameters: {
       type: "object",
       properties: {
