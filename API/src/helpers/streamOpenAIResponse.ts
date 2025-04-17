@@ -17,7 +17,8 @@ interface StreamProcessingResult {
 export async function streamOpenAIResponseToClient(
   aiStream: Stream<ChatCompletionChunk>,
   ws: WebSocket,
-  chatHistory: ChatCompletionMessageParam[]
+  chatHistory: ChatCompletionMessageParam[],
+  timer?: any
 ): Promise<StreamProcessingResult> {
   let accumulatedResponseText = "";
   let accumulatedFunctionArgs = "";
@@ -48,9 +49,6 @@ export async function streamOpenAIResponseToClient(
           ) {
             isLastToken = true;
           }
-          if (["!", "?", "."].includes(currentToken.slice(-1))) {
-            isLastToken = true;
-          }
           if (currentToken !== "") {
             const textTokenMessage = {
               type: "text",
@@ -58,6 +56,9 @@ export async function streamOpenAIResponseToClient(
               last: isLastToken,
             };
             if (ws.readyState === WebSocket.OPEN) {
+              if (timer) {
+                clearTimeout(timer);
+              }
               ws.send(JSON.stringify(textTokenMessage));
             } else {
               console.log("WebSocket closed before sending token");

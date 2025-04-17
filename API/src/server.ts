@@ -6,8 +6,15 @@ import { wsMessageSchema } from "./types";
 import { AzureOpenAI } from "openai";
 import { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import { functionCalls } from "./types/functionCalls";
-import { StoreEntity, TableService } from "./services/data-table-service";
+import {
+  CustomerEntity,
+  OrderEntity,
+  StockEntity,
+  StoreEntity,
+  TableService,
+} from "./services/data-table-service";
 import { streamOpenAIResponseToClient } from "./helpers/streamOpenAIResponse";
+import { roundRobinResponse } from "./helpers/roundRobinResponses";
 
 dotenv.config();
 const app: Express = express();
@@ -36,20 +43,39 @@ promptHistory.push({
   name: "system",
   role: "system",
   content:
-    "You are a helpful assistant, for a record store, which sells vinyl records",
+    "You are a helpful assistant, for a record store, which sells vinyl records. Never read out partition or row",
 });
 
 //Init TableService
-
+let stores: StoreEntity[] = [];
 const tableService = new TableService();
+const getStoreInfo = async () => {
+  stores = await tableService.listStoreEntity();
+  if (stores) {
+    promptHistory.push({
+      name: "system",
+      role: "system",
+      content: `Here is a list of shops. This list tells you the address, 
+        and name of each store. The row key, is an identifier, which will be used later.#
+        Do not speak about the store information until asked. Here is the list: ${JSON.stringify(
+          stores
+        )}`,
+    });
+  }
+};
+getStoreInfo();
 
-wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
+wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`Client connected from IP: ${clientIp}`);
   let processing = false;
+  let roundRobin = 0;
   ws.send(`Connection Established`);
 
   ws.on("message", async (message) => {
+    let timer = null;
+    let customerData: CustomerEntity | undefined;
+    let orderData: { orders: OrderEntity[]; stock: StockEntity[] };
     if (processing) {
       console.log("Processing something already");
       return;
@@ -59,10 +85,73 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
       const parsed = JSON.parse(stringMessage);
       const typedMessage = wsMessageSchema.safeParse(parsed);
       if (typedMessage.success) {
+        if (typedMessage.data.type === "setup" && typedMessage.data.from) {
+          let fromNumber = typedMessage.data.from;
+          if (fromNumber === "client:Anonymous") {
+            fromNumber = "7546606986";
+          }
+          customerData = await tableService.getCustomerByPhoneNumber(
+            {
+              PhoneNumber: fromNumber,
+            },
+            fromNumber
+          );
+          if (customerData) {
+            promptHistory.push({
+              name: "system",
+              role: "system",
+              content: `Here is the Customer who you are speaking with's information: ${JSON.stringify(
+                customerData
+              )}`,
+            });
+            orderData = await tableService.getCustomerOrders(
+              customerData.rowKey
+            );
+            if (orderData.orders) {
+              promptHistory.push({
+                name: "system",
+                role: "system",
+                content: `Here is the Customer's order data with us': ${JSON.stringify(
+                  orderData.orders
+                )}`,
+              });
+            }
+            if (orderData.stock) {
+              promptHistory.push({
+                name: "system",
+                role: "system",
+                content: `Here is the associated stock items for those orders': ${JSON.stringify(
+                  orderData.stock
+                )}`,
+              });
+            }
+          }
+          promptHistory.push({
+            name: "system",
+            role: "system",
+            content: `Here is a list of Genres currently in stock:
+            Hip Hop, Rock, Indie, Prog Rock, Alt Rock, Pop, Trip Hop, Folk Rock, Grunge, Punk`,
+          });
+        }
         if (typedMessage.data.type === "prompt") {
+          if (typedMessage.data.last) {
+            timer = setTimeout(() => {
+              const nextPreemptResponse = roundRobinResponse(ws, roundRobin);
+              let textTokenMessage;
+              switch (nextPreemptResponse.type) {
+                case "Text":
+                  textTokenMessage = {
+                    type: "text",
+                    token: nextPreemptResponse.text,
+                    preemptible: true,
+                    last: true,
+                  };
+                  ws.send(JSON.stringify(textTokenMessage));
+              }
+              roundRobin++;
+            }, 500);
+          }
           // Handle a "Interrupt" case, so we can deal with the history, Tool interruptions are harder.
-          console.log(typedMessage.data);
-          console.log(typedMessage.data.voicePrompt);
           if (typedMessage.data.lang && typedMessage.data.voicePrompt) {
             promptHistory.push({
               name: "user",
@@ -84,7 +173,8 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
             const finishedStream = await streamOpenAIResponseToClient(
               aiResponse,
               ws,
-              promptHistory
+              promptHistory,
+              timer ?? undefined
             );
             if (finishedStream) {
               processing = false;
@@ -103,36 +193,20 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
                     const records = await tableService.queryStockEntities(
                       queryStockParams
                     );
-                    let stores: StoreEntity[] = [];
-                    records.forEach(async (stock) => {
-                      const queryStoreParams = {
-                        rowKey: stock.partitionKey,
-                      };
-                      stores.push(
-                        await tableService.getStoreEntity(
-                          queryStoreParams.rowKey
-                        )
-                      );
-                    });
 
                     const stringyRecords = JSON.stringify(records);
-                    const stringyStores = JSON.stringify(stores);
                     const aiResponse = await client.chat.completions.create({
                       messages: [
-                        {
-                          name: "system",
-                          role: "system",
-                          content: `You are a helpful assistant, for a record store, which sells vinyl records`,
-                        },
+                        ...promptHistory,
                         {
                           name: "system",
                           role: "system",
                           content: `You will be provided with an array of stock data objects in JSON format.
-                       Use *only* this data to answer the user's question. Do not use any prior knowledge.
+                       Use *only* this data to answer the user's question (Or anything provided previously in this conversation).
                       If the answer cannot be found in the provided data, say so.
-                      \n\nHere is the stock data:\n\`\`\`json\n${stringyRecords}\n\`\`\` Along with this stock information could be 
-                      store information. The partition key of the stock, is a link to these store entries:
-                      ${stringyStores}`,
+                      Please note, this is not everything available in our collection, just what has been provided by a database
+                      search done prior to this. If a the user asks for something new, you will need to search the stock again.
+                      \n\nHere is the stock data:\n\`\`\`json\n${stringyRecords}\n\`\`\``,
                         },
                         {
                           name: "user",
@@ -149,7 +223,8 @@ wss.on("connection", (ws: WebSocket, req: http.IncomingMessage) => {
                       await streamOpenAIResponseToClient(
                         aiResponse,
                         ws,
-                        promptHistory
+                        promptHistory,
+                        timer
                       );
                     if (finishedStockStream) {
                       processing = false;
