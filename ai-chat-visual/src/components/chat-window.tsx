@@ -1,6 +1,7 @@
 // src/components/SyncStreamComponent.tsx
 import React, { useState, useEffect, useRef } from "react";
 import { SyncClient, SyncStream, SyncStreamMessage } from "twilio-sync";
+import TypewriterText from "./typerwriter";
 
 // Define a simple interface for the expected data structure within the stream messages
 // Adjust this based on the actual shape of your data
@@ -8,6 +9,7 @@ interface MyStreamMessageData {
   text: string;
   author: string;
   messageId: string;
+  interrupt?: boolean;
 }
 
 // Define the structure of a StreamMessage with our specific data type
@@ -45,7 +47,7 @@ const SyncStreamComponent: React.FC<SyncStreamComponentProps> = ({
       try {
         // --- 1. Fetch Access Token (Same as before) ---
         const response = await fetch(
-          `https://dinner-cliff-premises-realm.trycloudflare.com/GetToken?identity=WebApp`,
+          `https://ashley-butter-secondary-models.trycloudflare.com/GetToken?identity=WebApp`,
           {
             method: "GET",
           }
@@ -129,9 +131,42 @@ const SyncStreamComponent: React.FC<SyncStreamComponentProps> = ({
               event.message.sid,
               event.message.data
             );
-            const newMessage = event.message.data as MyStreamMessageData;
-            // Append the newly received message data to our state
-            setMessages((prevMessages) => [...prevMessages, newMessage]);
+            const incomingData = event.message
+              .data as Partial<MyStreamMessageData> & { interrupt?: boolean };
+
+            // Check if the *incoming* data signifies an interrupt
+            if (incomingData.interrupt === true) {
+              // --- Handle Interrupt Signal ---
+              setMessages((prevMessages) => {
+                // Check if there are any messages currently in the state
+                if (prevMessages.length === 0) {
+                  console.warn(
+                    "Received interrupt signal but there are no messages to interrupt."
+                  );
+                  return prevMessages; // No change needed, return the existing state
+                }
+
+                // Create a new array containing all messages EXCEPT the last one
+                const messagesBeforeLast = prevMessages.slice(0, -1);
+
+                // Get a reference to the original last message
+                const lastMessage = prevMessages[prevMessages.length - 1];
+
+                // Create a *new* object for the last message, copying its properties
+                // and setting the interrupt flag to true.
+                const interruptedLastMessage: MyStreamMessageData = {
+                  ...lastMessage, // Spread existing properties
+                  interrupt: true, // Set the interrupt flag
+                };
+
+                // Return the new state array: the messages before the last, plus the modified last one
+                return [...messagesBeforeLast, interruptedLastMessage];
+              });
+            } else {
+              const newMessage = incomingData as MyStreamMessageData;
+
+              setMessages((prevMessages) => [...prevMessages, newMessage]);
+            }
           }
         );
 
@@ -174,35 +209,94 @@ const SyncStreamComponent: React.FC<SyncStreamComponentProps> = ({
   if (error) {
     return <div style={{ color: "red" }}>Error: {error}</div>;
   }
+  console.log(messages);
   return (
-    <div>
-      <h2>Sync Stream Messages ({streamNameOrSid})</h2>
+    // The outer div with margin
+    <div style={{ margin: "20px" }}>
+      <h2>Conversation Relay</h2>
       {messages.length === 0 ? (
         <p>Waiting for messages...</p>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0 }}>
-          {messages.map((msg, index) => (
-            // Use a unique message SID if available from your data, otherwise index (less ideal)
-            <li
-              key={index}
-              style={{
-                marginBottom: "10px",
-                borderBottom: "1px solid #eee",
-                paddingBottom: "5px",
-              }}
-            >
-              {/* Render your message data */}
-              <span style={{ fontWeight: "bold" }}>
-                {msg.author || "System"}:{" "}
-              </span>
-              <span>{msg.text}</span>
-              <br />
-              <small style={{ color: "gray" }}></small>
-            </li>
-          ))}
+        <ul
+          style={{
+            listStyle: "none",
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {messages.map((msg, index) => {
+            const messageKey = index; // Unique key for the message
+
+            return (
+              <li
+                key={messageKey} // Use the same key here
+                style={{
+                  /* ... your li styles ... */ display: "flex",
+                  marginBottom: "10px",
+                  maxWidth: "75%",
+                  wordWrap: "break-word",
+                  alignSelf:
+                    msg.author === "System" ? "flex-start" : "flex-end",
+                  marginLeft: msg.author === "System" ? "0" : "auto",
+                  marginRight: msg.author === "System" ? "auto" : "0",
+                }}
+                // Example: Add an onClick to the list item to interrupt it
+                // onClick={() => handleInterrupt(messageKey)}
+              >
+                <div
+                  style={{
+                    /* ... your bubble styles ... */ padding: "8px 12px",
+                    borderRadius: "15px",
+                    textAlign: "left",
+                    backgroundColor:
+                      msg.author === "System" ? "#f1f0f0" : "#007bff",
+                    color: msg.author === "System" ? "#333" : "white",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontWeight: "bold",
+                      display: "block",
+                      marginBottom: "3px",
+                    }}
+                  >
+                    {msg.author === "System"
+                      ? "System:"
+                      : (msg.author || "User") + ":"}
+                  </span>
+
+                  {/* === Pass the interrupt prop === */}
+                  {msg.author === "System" ? (
+                    <TypewriterText
+                      text={msg.text}
+                      speed={30}
+                      interrupt={msg.interrupt ?? false} // Pass the interrupt state
+                    />
+                  ) : (
+                    <span>{msg.text}</span>
+                  )}
+
+                  {/* ============================== */}
+
+                  <br />
+                  <small
+                    style={{
+                      /* ... your small styles ... */
+                      color: msg.author === "System" ? "gray" : "#e0e0e0",
+                      fontSize: "0.75em",
+                      display: "block",
+                      marginTop: "4px",
+                    }}
+                  >
+                    {/* Timestamp placeholder */}
+                  </small>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
-      {/* Example: Add an input to publish messages (requires more logic) */}
       {/* <PublishMessageComponent stream={syncStreamRef.current} /> */}
     </div>
   );

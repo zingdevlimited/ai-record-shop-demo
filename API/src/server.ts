@@ -107,7 +107,7 @@ promptHistory.push({
   role: "system",
   content: `You are a helpful assistant, for a record store, which sells vinyl records. Never read out partitionkey or rowkeys.
   Always return in plain text, with A-z. Numbers should be spelt out. Anything you reply with is being read out by an AI
-  bot, so do not format the responses like text`,
+  bot, so do not format the responses like text. You can search for records and find information from a database / inventory / stock collection, which the record store owns.`,
 });
 
 //Init TableService
@@ -132,23 +132,14 @@ getStoreInfo();
 wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
   const clientIp = req.socket.remoteAddress;
   console.log(`Client connected from IP: ${clientIp}`);
-  let processing = false;
   let roundRobin = 0;
   ws.send(`Connection Established`);
-  await sendToSyncStream(
-    "System",
-    "Hello and welcome to the record store, how can we help you today?",
-    twilioClient
-  );
 
   ws.on("message", async (message) => {
     let timer = null;
     let customerData: CustomerEntity | undefined;
     let orderData: { orders: OrderEntity[]; stock: StockEntity[] };
-    if (processing) {
-      console.log("Processing something already");
-      return;
-    }
+
     try {
       const stringMessage = message.toString("utf-8");
       const parsed = JSON.parse(stringMessage);
@@ -193,7 +184,7 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
                 role: "system",
                 content: `Here is the associated stock items for those orders': ${JSON.stringify(
                   orderData.stock
-                )}`,
+                )}. This is not a complete collection of stock items the record store has available, only the stock items that the user has purchased`,
               });
             }
           }
@@ -205,6 +196,7 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
           });
         }
         if (typedMessage.data.type === "prompt") {
+          console.log("Received prompt from WS");
           timer = setTimeout(async () => {
             const nextPreemptResponse = roundRobinResponse(ws, roundRobin);
             let textTokenMessage;
@@ -225,6 +217,7 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
             }
 
             roundRobin++;
+            console.log("Sent Round Robin waiting Line");
           }, 500);
           // Handle a "Interrupt" case, so we can deal with the history, Tool interruptions are harder.
           if (typedMessage.data.lang && typedMessage.data.voicePrompt) {
@@ -247,9 +240,9 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
               stream: true,
               tools: functionCalls,
             });
+            console.log("Generating AI response");
 
             //call the streamAIResponse function
-            processing = true;
             const finishedStream = await streamOpenAIResponseToClient(
               aiResponse,
               ws,
@@ -257,10 +250,11 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
               twilioClient,
               timer ?? undefined
             );
-            if (finishedStream) {
-              processing = false;
-            }
+            console.log("Streaming AI Response");
+
             if (finishedStream.functionCallDetected) {
+              console.log("Function Call Detected");
+
               //Set Timeout here to send a hold on message, to handle situations where functions calls take a long time
               //Preemptible will stop the previous send from speaking, so you can stop a filler phrase
               switch (finishedStream.functionName) {
@@ -303,7 +297,8 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
                       stream: true,
                       tools: functionCalls,
                     });
-                    processing = true;
+                    console.log("Generating Function Call AI Response");
+
                     const finishedStockStream =
                       await streamOpenAIResponseToClient(
                         aiResponse,
@@ -312,9 +307,8 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
                         twilioClient,
                         timer
                       );
-                    if (finishedStockStream) {
-                      processing = false;
-                    }
+                    console.log("Streaming Function Call AI Response");
+
                     promptHistory = finishedStockStream.chatHistory;
                   }
                   break;
@@ -324,7 +318,70 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
               promptHistory = finishedStream.chatHistory;
             }
           }
-        } else if (typedMessage.data.type === "end") {
+        }
+        if (
+          typedMessage.data.type === "interrupt" &&
+          typedMessage.data.utteranceUntilInterrupt
+        ) {
+          const lastPrompt = promptHistory.pop();
+
+          if (lastPrompt && typeof lastPrompt.content === "string") {
+            const fullResponseText = lastPrompt.content;
+            const interruptSnippet = typedMessage.data.utteranceUntilInterrupt;
+
+            if (interruptSnippet === "") {
+              console.warn(
+                "Interrupt snippet was empty. Assuming interrupt occurred at the beginning. Setting content to empty string."
+              );
+            } else {
+              const snippetStartIndex =
+                fullResponseText.indexOf(interruptSnippet);
+
+              if (snippetStartIndex !== -1) {
+                const cutOffPoint = snippetStartIndex + interruptSnippet.length;
+
+                const actuallySpokenText = fullResponseText.slice(
+                  0,
+                  cutOffPoint
+                );
+
+                const updatedPrompt: ChatCompletionMessageParam = {
+                  role: "system",
+                  name: "system",
+                  content: actuallySpokenText,
+                };
+
+                promptHistory.push(updatedPrompt);
+                console.log(
+                  "Updated prompt history with text spoken up to interrupt snippet end:",
+                  updatedPrompt
+                );
+              } else {
+                // Error: The snippet wasn't found in the text it supposedly came from.
+                console.error(
+                  `Error: Interrupt snippet "${interruptSnippet}" not found within the last prompt's content: "${fullResponseText}". Re-adding original prompt as fallback.`
+                );
+                // Push the original back since we couldn't process it correctly
+                promptHistory.push(lastPrompt);
+              }
+            }
+          } else {
+            // Handle case where history was empty or last item was invalid
+            if (lastPrompt) {
+              // If lastPrompt existed but didn't have string content
+              console.warn(
+                "Last prompt item did not have valid string content. Re-adding original prompt."
+              );
+              promptHistory.push(lastPrompt);
+            } else {
+              console.warn(
+                "Attempted to update history for interrupt, but prompt history was empty."
+              );
+            }
+          }
+          const yeah = await sendToSyncStream("", "", twilioClient, true);
+        }
+        if (typedMessage.data.type === "end") {
           console.log("End of connection");
         }
       }
@@ -336,6 +393,11 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
   ws.on("close", () => {
     console.log("Client disconnected");
   });
+  await sendToSyncStream(
+    "System",
+    "Hello and welcome to the record store, how can we help you today?",
+    twilioClient
+  );
 });
 
 server.listen(8000, () => {

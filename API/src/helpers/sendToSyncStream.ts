@@ -2,7 +2,8 @@ import { Twilio } from "twilio";
 export async function sendToSyncStream(
   role: string,
   content: string,
-  client: Twilio
+  client: Twilio,
+  interrupt?: boolean
 ): Promise<void> {
   const streamSid = process.env.TWILIO_SYNC_STREAM_SID;
   const syncSid = process.env.TWILIO_SYNC_SERVICE_SID;
@@ -18,9 +19,9 @@ export async function sendToSyncStream(
           text: content,
           author: role,
           messageId: "Hi",
+          interrupt: interrupt ?? false,
         },
       });
-    console.log(streamMessage);
   } catch (e) {
     const err = e as Error;
     throw Error(err.message);
