@@ -1,5 +1,7 @@
 # Record Store AI Assistant - Backend & Frontend Monitor
 
+Link to Demo: [Click Here](https://zingdev-my.sharepoint.com/:v:/g/personal/joe_hainstock_zing_dev/ETaUQyLRub5Mr1ATi2VCQxABE5f5BG8HO2BUwqRQrYhG6Q?e=yL0maj&nav=eyJyZWZlcnJhbEluZm8iOnsicmVmZXJyYWxBcHAiOiJTdHJlYW1XZWJBcHAiLCJyZWZlcnJhbFZpZXciOiJTaGFyZURpYWxvZy1MaW5rIiwicmVmZXJyYWxBcHBQbGF0Zm9ybSI6IldlYiIsInJlZmVycmFsTW9kZSI6InZpZXcifX0%3D)
+
 This project consists of two main parts:
 
 1.  **Backend Server:** A Node.js application using Express, WebSockets, Twilio, Azure OpenAI, and Azure Table Storage. It handles the core logic for an AI-driven voice assistant for a record store, including managing conversation state, interacting with the language model, querying data, and streaming responses. It also publishes conversation updates to a Twilio Sync Stream.
