@@ -1,4 +1,4 @@
-import { error } from "console";
+import { clear, error } from "console";
 import {
   ChatCompletionChunk,
   ChatCompletionMessageParam,
@@ -58,15 +58,8 @@ export async function streamOpenAIResponseToClient(
               token: currentToken,
               last: isLastToken,
             };
-            if (ws.readyState === WebSocket.OPEN) {
-              if (timer) {
-                clearTimeout(timer);
-              }
-              ws.send(JSON.stringify(textTokenMessage));
-            } else {
-              console.log("WebSocket closed before sending token");
-              break;
-            }
+            ws.send(JSON.stringify(textTokenMessage));
+            clearTimeout(timer);
           }
         }
       }

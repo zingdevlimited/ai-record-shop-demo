@@ -91,7 +91,7 @@ const wss = new WebSocketServer({ server });
 
 const apiKey = process.env.LLM_API_KEY;
 const apiVersion = "2024-12-01-preview";
-const endpoint = "https://recordshopaifo3229622076.openai.azure.com/";
+const endpoint = process.env.LLM_ENDPOINT;
 const modelName = "o3-mini";
 const deployment = "o3-mini";
 const options = { endpoint, apiKey, deployment, apiVersion };
@@ -107,7 +107,8 @@ promptHistory.push({
   role: "system",
   content: `You are a helpful assistant, for a record store, which sells vinyl records. Never read out partitionkey or rowkeys.
   Always return in plain text, with A-z. Numbers should be spelt out. Anything you reply with is being read out by an AI
-  bot, so do not format the responses like text. You can search for records and find information from a database / inventory / stock collection, which the record store owns.`,
+  bot, so do not format the responses like text. You can search for records and find information from a database / inventory / stock collection, which the record store owns. 
+  All prices should be read out at gbp or pounds`,
 });
 
 //Init TableService
@@ -196,7 +197,6 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
           });
         }
         if (typedMessage.data.type === "prompt") {
-          console.log("Received prompt from WS");
           timer = setTimeout(async () => {
             const nextPreemptResponse = roundRobinResponse(ws, roundRobin);
             let textTokenMessage;
@@ -218,7 +218,8 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
 
             roundRobin++;
             console.log("Sent Round Robin waiting Line");
-          }, 500);
+          }, 2500);
+          console.log("Received prompt from WS");
           // Handle a "Interrupt" case, so we can deal with the history, Tool interruptions are harder.
           if (typedMessage.data.lang && typedMessage.data.voicePrompt) {
             promptHistory.push({
@@ -298,14 +299,12 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
                       tools: functionCalls,
                     });
                     console.log("Generating Function Call AI Response");
-
                     const finishedStockStream =
                       await streamOpenAIResponseToClient(
                         aiResponse,
                         ws,
                         promptHistory,
-                        twilioClient,
-                        timer
+                        twilioClient
                       );
                     console.log("Streaming Function Call AI Response");
 
@@ -393,6 +392,7 @@ wss.on("connection", async (ws: WebSocket, req: http.IncomingMessage) => {
   ws.on("close", () => {
     console.log("Client disconnected");
   });
+
   await sendToSyncStream(
     "System",
     "Hello and welcome to the record store, how can we help you today?",

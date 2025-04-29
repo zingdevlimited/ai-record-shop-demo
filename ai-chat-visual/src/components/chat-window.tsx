@@ -47,7 +47,7 @@ const SyncStreamComponent: React.FC<SyncStreamComponentProps> = ({
       try {
         // --- 1. Fetch Access Token (Same as before) ---
         const response = await fetch(
-          `https://ashley-butter-secondary-models.trycloudflare.com/GetToken?identity=WebApp`,
+          process.env.API_URL || "http://localhost:8000",
           {
             method: "GET",
           }
